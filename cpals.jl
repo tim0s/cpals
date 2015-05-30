@@ -206,7 +206,95 @@ println(ASCIIString(plain))
 # Remember that the problem with ECB is that it is stateless and deterministic;
 # the same 16 byte plaintext block will always produce the same 16 byte ciphertext.
 
+function identical_blocks(bytes, blocksize)
+  blocks = split_into_blocks(bytes, blocksize)
+  d = Dict{ASCIIString, Int32}()
+  mapslices(x -> d[bytes2hex(x)]=get(d, bytes2hex(x), 0)+1, blocks, 2)
+  return reduce(max, values(d))-1
+end
+
 f = open("/home/timos/Work/cpals/8.txt")
 lines = map(chomp, readlines(f))
 bytes = map(hex2bytes, lines)
-# find successive identical blocks of length blocksize
+is_ecb = map(x->identical_blocks(x, 16), bytes)
+println("Line ", indmax(is_ecb), " is ECB encrypted")
+
+# Challenge 9
+
+function pad_pkcs7(bytes, blocksize)
+  padlen = blocksize - (length(bytes) % blocksize)
+  padbyte = convert(Uint8, padlen)
+  append!(convert(Array{Uint8,1}, bytes), [padbyte for i=1:padlen])
+end
+
+@test ASCIIString(pad_pkcs7("YELLOW_SUBMARINE", 20)) == "YELLOW_SUBMARINE\x04\x04\x04\x04"
+
+
+# Challenge 10 (implement CBC)
+function AESCBC(bytes, iv, key, encrypt)
+  out = Uint8[]
+  blocks = split_into_blocks(bytes, 16)
+  for (i in 1:size(blocks, 1))
+    block = vec(blocks[i,:])
+    if (encrypt == true)
+      res = AESECB(xor(block, iv), key, encrypt)
+      iv = res
+    else
+      res = AESECB(block, key, encrypt)
+      res = xor(res, iv)
+      iv = block
+    end
+    append!(out, res)
+  end
+  return out
+end
+
+f = open("/home/timos/Work/cpals/10.txt")
+s = map(chomp, readlines(f))
+b64str = join(s)
+bytes = base642bytes(b64str)
+key = convert(Array{Uint8,1}, "YELLOW SUBMARINE")
+iv = convert(Array{Uint8,1}, [0 for i=1:16])
+plain = ASCIIString(AESCBC(bytes, iv, key, false))
+println(plain)
+
+# Challenge 11 (detect ECB/CBC)
+
+random_bytes(len) =[convert(Uint8, round(rand()*255)) for i=1:len]
+
+function ECB_CBC_oracle(plain)
+  key = random_bytes(16)
+  iv = random_bytes(16)
+  prefix = random_bytes(round(5+rand()*5))
+  postfix = random_bytes(round(5+rand()*5))
+  plain = pad_pkcs7(vec([prefix, plain, postfix]), 16)
+  cipher = Uint8[]
+  mode = "ECB"
+  if (rand() > 0.5)
+    mode = "CBC"
+    cipher = AESCBC(plain, iv, key, true)
+  else
+    cipher = AESECB(plain, key, true)
+  end
+  return (cipher, mode)
+end
+
+function ECB_CBC_detection(runs)
+  num_correct = 0
+  for i in 1:runs
+    (cipher, mode) = ECB_CBC_oracle([convert(Uint8, 'A') for i=1:100])
+    guess = "CBC"
+    if (identical_blocks(cipher, 16) > 0)
+      guess = "ECB"
+    end
+    if (guess == mode)
+      num_correct = num_correct + 1
+    end
+  end
+  return num_correct
+end
+
+ECB_CBC_detection(100) == 100
+
+# Challenge 12 (ECB byte at a time attack)
+
